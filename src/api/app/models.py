@@ -14,6 +14,7 @@ class JobCreateResponse(BaseModel):
     jobId: str
     status: str
     createdAt: str
+    uploadUrl: str
 
 def job_to_entity(req: JobCreateRequest) -> Dict[str, Any]:
     job_id = str(uuid.uuid4())
