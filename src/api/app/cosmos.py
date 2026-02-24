@@ -1,7 +1,7 @@
 from azure.cosmos import CosmosClient
 from .config import settings
 
-_client = CosmosClient | None = None
+_client: CosmosClient | None = None
 
 def get_cosmos_container():
     global _client
