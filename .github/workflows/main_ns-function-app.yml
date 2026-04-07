@@ -39,8 +39,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-        cd $AZURE_FUNCTIONAPP_PACKAGE_PATH
-        pip install -r requirements.txt
+          cd $AZURE_FUNCTIONAPP_PACKAGE_PATH
+          pip install -r requirements.txt
 
       # Optional: Add step to run tests here
 
