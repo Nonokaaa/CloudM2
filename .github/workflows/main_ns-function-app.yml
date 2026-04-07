@@ -8,6 +8,9 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'src/functions/worker/**'
+      - ".github/workflows/main_ns-function-app.yml"
   workflow_dispatch:
 
 env:

@@ -31,5 +31,6 @@ def job_to_entity(req: JobCreateRequest) -> Dict[str, Any]:
         "createdAt": ts,
         "updatedAt": ts,
         "resultSummary": None,
-        "error": None
+        "error": None,
+        "fileSize": int | None
     }
