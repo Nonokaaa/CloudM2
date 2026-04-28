@@ -4,6 +4,8 @@ import json
 import os
 from datetime import datetime, timezone
 from azure.cosmos import CosmosClient
+from azure.ai.textanalytics import TextAnalyticsClient
+from azure.core.credentials import AzureKeyCredential
 
 app = func.FunctionApp()
 
@@ -94,6 +96,12 @@ client = CosmosClient(endpoint, key)
 database = client.get_database_client("db-doc")
 container_cosmos = database.get_container_client("jobs")
 
+# Initialisation du client AI
+def get_ai_client():
+    key = os.environ["AI_SERVICE_KEY"]
+    endpoint = os.environ["AI_SERVICE_ENDPOINT"]
+    return TextAnalyticsClient(endpoint, AzureKeyCredential(key))
+
 @app.service_bus_queue_trigger(
     arg_name="msg",
     queue_name="document-processing",
@@ -108,40 +116,71 @@ def ServiceBusWorker(msg: func.ServiceBusMessage):
     
     logging.info(f"[Function2] Traitement du document : {doc_id}")
 
+    # try:
+    #     if file_size == 0:
+    #         update_cosmos_status(doc_id, "ERROR", [])
+    #         logging.warning(f"Document {doc_id} vide. Statut ERROR.")
+    #         return
+
+    #     # 3. Logique de Tagging (basée sur l'énoncé du TP)
+    #     tags = set()
+        
+    #     # Extensions
+    #     if file_name.endswith('.pdf'): tags.update(['pdf', 'document'])
+    #     elif file_name.endswith('.docx'): tags.update(['word', 'document'])
+    #     elif file_name.endswith('.png'): tags.update(['image'])
+        
+    #     # Mots-clés
+    #     keywords_map = {
+    #         "cv": ["cv", "rh"],
+    #         "facture": ["facture", "comptabilite"],
+    #         "contrat": ["contrat", "administratif"],
+    #         "azure": ["azure", "cloud"],
+    #         "docker": ["docker", "devops"]
+    #     }
+        
+    #     for key, value in keywords_map.items():
+    #         if key in file_name:
+    #             tags.update(value)
+
+    #     # 4. Mise à jour Cosmos DB
+    #     update_cosmos_status(doc_id, "PROCESSED", list(tags))
+    #     logging.info(f"Document {doc_id} traité avec succès.")
+
+    # except Exception as e:
+    #     logging.error(f"Erreur lors du traitement : {e}")
+    #     # En cas d'erreur (ex: document introuvable), on peut mettre le statut à ERROR
+    #     update_cosmos_status(doc_id, "ERROR", [])
+
     try:
-        if file_size == 0:
-            update_cosmos_status(doc_id, "ERROR", [])
-            logging.warning(f"Document {doc_id} vide. Statut ERROR.")
-            return
+        # 2. Appel à Azure AI pour extraire des mots-clés du nom de fichier
+        client_ai = get_ai_client()
+        # On nettoie un peu le nom (on enlève l'extension et les underscores)
+        clean_name = file_name.replace("_", " ").replace("-", " ").split(".")[0]
+        
+        response = client_ai.extract_key_phrases(documents=[clean_name])[0]
+        tags = response.key_phrases
 
-        # 3. Logique de Tagging (basée sur l'énoncé du TP)
-        tags = set()
-        
-        # Extensions
-        if file_name.endswith('.pdf'): tags.update(['pdf', 'document'])
-        elif file_name.endswith('.docx'): tags.update(['word', 'document'])
-        elif file_name.endswith('.png'): tags.update(['image'])
-        
-        # Mots-clés
-        keywords_map = {
-            "cv": ["cv", "rh"],
-            "facture": ["facture", "comptabilite"],
-            "contrat": ["contrat", "administratif"],
-            "azure": ["azure", "cloud"],
-            "docker": ["docker", "devops"]
-        }
-        
-        for key, value in keywords_map.items():
-            if key in file_name:
-                tags.update(value)
+        # Si l'IA ne trouve rien, on met un tag par défaut pour éviter un tableau vide
+        if not tags:
+            tags = ["document"]
 
-        # 4. Mise à jour Cosmos DB
-        update_cosmos_status(doc_id, "PROCESSED", list(tags))
-        logging.info(f"Document {doc_id} traité avec succès.")
+        # 3. Mise à jour Cosmos DB
+        update_cosmos_status(doc_id, "PROCESSED", tags)
+
+        # 4. Notification finale PROCESSED
+        signalRMessages.set(json.dumps({
+            "target": "newMessage",
+            "arguments": [{
+                "documentId": doc_id,
+                "status": "PROCESSED",
+                "message": "Tags générés avec succès",
+                "tags": tags
+            }]
+        }))
 
     except Exception as e:
-        logging.error(f"Erreur lors du traitement : {e}")
-        # En cas d'erreur (ex: document introuvable), on peut mettre le statut à ERROR
+        logging.error(f"Erreur AI : {e}")
         update_cosmos_status(doc_id, "ERROR", [])
 
 def update_cosmos_status(doc_id, status, tags):
