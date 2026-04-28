@@ -122,7 +122,9 @@ def ServiceBusWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]
     
     logging.info(f"[Function2] Traitement du document : {doc_id}")
 
-    signalRMessages.set(json.dumps({
+    notifications = []
+
+    notifications.append(json.dumps({
         "target": "newMessage",
         "arguments": [{
             "documentId": doc_id,
@@ -130,14 +132,13 @@ def ServiceBusWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]
             "message": "L'IA analyse votre document..."
         }]
     }))
-
     update_cosmos_status(doc_id, "PROCESSING", [])
 
     try:
         if file_size == 0:
             update_cosmos_status(doc_id, "ERROR", [])
             # AJOUT : Notification SignalR obligatoire ici avant le return
-            signalRMessages.set(json.dumps({
+            notifications.append(json.dumps({
                 "target": "newMessage",
                 "arguments": [{
                     "documentId": doc_id,
@@ -166,7 +167,7 @@ def ServiceBusWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]
         update_cosmos_status(doc_id, "PROCESSED", tags)
 
         # 4. Notification finale PROCESSED
-        signalRMessages.set(json.dumps({
+        notifications.append(json.dumps({
             "target": "newMessage",
             "arguments": [{
                 "documentId": doc_id,
@@ -181,7 +182,7 @@ def ServiceBusWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]
         update_cosmos_status(doc_id, "ERROR", [])
         
         # NOTIFICATION "ERROR"
-        signalRMessages.set(json.dumps({
+        notifications.append(json.dumps({
             "target": "newMessage",
             "arguments": [{
                 "documentId": doc_id,
@@ -189,6 +190,8 @@ def ServiceBusWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]
                 "message": "Le traitement a échoué"
             }]
         }))
+        
+    signalRMessages.set(notifications)
 
 def update_cosmos_status(doc_id, status, tags):
     # On récupère l'item existant
