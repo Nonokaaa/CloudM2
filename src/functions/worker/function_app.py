@@ -136,8 +136,19 @@ def ServiceBusWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]
     try:
         if file_size == 0:
             update_cosmos_status(doc_id, "ERROR", [])
-            logging.warning(f"Document {doc_id} vide. Statut ERROR.")
+            # AJOUT : Notification SignalR obligatoire ici avant le return
+            signalRMessages.set(json.dumps({
+                "target": "newMessage",
+                "arguments": [{
+                    "documentId": doc_id,
+                    "status": "ERROR",
+                    "message": "Erreur : Le fichier est vide (0 octet)."
+                }]
+            }))
             return
+        
+        import time
+        time.sleep(1)  # Simule le temps de traitement de l'IA
         
         # 2. Appel à Azure AI pour extraire des mots-clés du nom de fichier
         client_ai = get_ai_client()
