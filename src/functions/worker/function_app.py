@@ -11,6 +11,19 @@ def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 # ─────────────────────────────────────────
+# NÉGOCIATION SIGNALR (Pour le Front-end)
+# ─────────────────────────────────────────
+@app.route(route="negotiate", auth_level=func.AuthLevel.ANONYMOUS)
+@app.generic_input_binding(
+    arg_name="connectionInfo", 
+    type="signalRConnectionInfo", 
+    hubName="documentsHub", 
+    connectionStringSetting="SIGNALR_CONNECTION_STRING"
+)
+def negotiate(req: func.HttpRequest, connectionInfo) -> func.HttpResponse:
+    return func.HttpResponse(connectionInfo)
+
+# ─────────────────────────────────────────
 # FUNCTION 1 — Blob Trigger → Service Bus
 # ─────────────────────────────────────────
 @app.blob_trigger(
@@ -22,6 +35,12 @@ def now_iso():
     arg_name="msg",
     queue_name="document-processing",
     connection="SERVICE_BUS_CONNECTION_STR"
+)
+@app.generic_output_binding(
+    arg_name="signalRMessages",
+    type="signalR",
+    hubName="documentsHub",
+    connectionStringSetting="SIGNALR_CONNECTION_STRING"
 )
 def BlobToServiceBus(myblob: func.InputStream, msg: func.Out[str]):
     logging.info(f"[Function1] Traitement du blob : {myblob.name}")
@@ -37,7 +56,6 @@ def BlobToServiceBus(myblob: func.InputStream, msg: func.Out[str]):
         document_id = parts[0] if len(parts) >= 2 else "unknown"
         file_name = parts[1] if len(parts) >= 2 else file_part
 
-    # Préparation du message JSON attendu par le TP
     message = {
         "documentId": document_id,
         "fileName": file_name,
@@ -49,7 +67,22 @@ def BlobToServiceBus(myblob: func.InputStream, msg: func.Out[str]):
     # Envoi automatique vers Service Bus
     msg.set(json.dumps(message))
     
-    logging.info(f"[Function1] Message envoyé pour documentId={document_id}")
+    # Notification UPLOADED demandée par le sujet
+    signalRMessages.set(json.dumps({
+        "target": "newMessage",
+        "arguments": [{
+            "documentId": document_id,
+            "status": "UPLOADED",
+            "message": "Fichier reçu"
+        }]
+    }))
+
+    try:
+        update_cosmos_status(document_id, "QUEUED", [])
+    except Exception as e:
+        logging.error(f"Erreur mise à jour QUEUED : {e}")
+
+    logging.info(f"[Function1] Terminé pour documentId={document_id}")
 
 # # ─────────────────────────────────────────
 # # FUNCTION 2 — Service Bus → Cosmos DB
@@ -67,10 +100,8 @@ container_cosmos = database.get_container_client("jobs")
     connection="SERVICE_BUS_CONNECTION_STR"
 )
 def ServiceBusWorker(msg: func.ServiceBusMessage):
-    # 1. Lire et décoder le message
     message_body = msg.get_body().decode('utf-8')
     data = json.loads(message_body)
-    
     doc_id = data['documentId']
     file_name = data['fileName'].lower()
     file_size = data['size']
@@ -78,7 +109,6 @@ def ServiceBusWorker(msg: func.ServiceBusMessage):
     logging.info(f"[Function2] Traitement du document : {doc_id}")
 
     try:
-        # 2. Règle : Vérifier si le fichier est vide
         if file_size == 0:
             update_cosmos_status(doc_id, "ERROR", [])
             logging.warning(f"Document {doc_id} vide. Statut ERROR.")
