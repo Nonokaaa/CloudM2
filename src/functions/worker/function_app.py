@@ -57,7 +57,7 @@ endpoint = os.environ["COSMOS_ENDPOINT"]
 key = os.environ["COSMOS_KEY"]
 client = CosmosClient(endpoint, key)
 database = client.get_database_client("db-doc")
-container_cosmos = database.get_container_client("doc-storage")
+container_cosmos = database.get_container_client("jobs")
 
 @app.service_bus_queue_trigger(
     arg_name="msg",
