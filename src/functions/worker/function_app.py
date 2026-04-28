@@ -37,10 +37,7 @@
 import azure.functions as func
 import logging
 import json
-import os
 from datetime import datetime, timezone
-from azure.servicebus import ServiceBusClient, ServiceBusMessage
-from azure.cosmos import CosmosClient, exceptions
 
 app = func.FunctionApp()
 
@@ -53,39 +50,38 @@ def now_iso():
 @app.blob_trigger(
     arg_name="myblob",
     path="doc-storage/input/{name}",
+    connection="docstoragens_STORAGE"
+)
+@app.service_bus_queue_output(
+    arg_name="msg",
+    queue_name="SERVICE_BUS_QUEUE_NAME",
     connection="SERVICE_BUS_CONNECTION_STR"
 )
-def BlobToServiceBus(myblob: func.InputStream):
-    logging.info(f"[Function1] Blob trigger function processed blob"
-                f"Name: {myblob.name}"
-                f"Blob Size: {myblob.length} bytes")
-    blob_name = myblob.name  # input/123_cv_amine_azure.pdf
-    file_part = blob_name.split("/")[-1]  # 123_cv_amine_azure.pdf
+def BlobToServiceBus(myblob: func.InputStream, msg: func.Out[str]):
+    logging.info(f"[Function1] Traitement du blob : {myblob.name}")
+    
+    # Extraction du nom seul (ex: 123_cv.pdf)
+    blob_full_path = myblob.name
+    file_part = blob_full_path.split("/")[-1]
 
-    # Parse documentId et fileName
+    # Parsing documentId et fileName selon le format id_nom.ext
     parts = file_part.split("_", 1)
-    document_id = parts[0] if len(parts) >= 2 else file_part
+    document_id = parts[0] if len(parts) >= 2 else "unknown"
     file_name = parts[1] if len(parts) >= 2 else file_part
 
+    # Préparation du message JSON attendu par le TP
     message = {
         "documentId": document_id,
         "fileName": file_name,
-        "blobName": blob_name,
+        "blobName": blob_full_path,
         "size": myblob.length,
         "uploadedAt": now_iso()
     }
 
-    logging.info(f"[Function1] Blob reçu: {blob_name} → envoi au Service Bus")
-
-    conn_str = os.environ["SERVICE_BUS_CONNECTION_STRING"]
-    queue_name = os.environ["SERVICE_BUS_QUEUE_NAME"]
-
-    with ServiceBusClient.from_connection_string(conn_str) as client:
-        with client.get_queue_sender(queue_name) as sender:
-            sender.send_messages(ServiceBusMessage(json.dumps(message)))
-
+    # Envoi automatique vers Service Bus
+    msg.set(json.dumps(message))
+    
     logging.info(f"[Function1] Message envoyé pour documentId={document_id}")
-
 
 # # ─────────────────────────────────────────
 # # FUNCTION 2 — Service Bus → Cosmos DB
