@@ -26,20 +26,22 @@ def now_iso():
 def BlobToServiceBus(myblob: func.InputStream, msg: func.Out[str]):
     logging.info(f"[Function1] Traitement du blob : {myblob.name}")
     
-    # Extraction du nom seul (ex: 123_cv.pdf)
-    blob_full_path = myblob.name
-    file_part = blob_full_path.split("/")[-1]
+    path_parts = myblob.name.split("/")
 
-    # Parsing documentId et fileName selon le format id_nom.ext
-    parts = file_part.split("_", 1)
-    document_id = parts[0] if len(parts) >= 2 else "unknown"
-    file_name = parts[1] if len(parts) >= 2 else file_part
+    if len(path_parts) >= 4:
+        document_id = path_parts[-2]
+        file_name = path_parts[-1]
+    else:
+        file_part = path_parts[-1]
+        parts = file_part.split("_", 1)
+        document_id = parts[0] if len(parts) >= 2 else "unknown"
+        file_name = parts[1] if len(parts) >= 2 else file_part
 
     # Préparation du message JSON attendu par le TP
     message = {
         "documentId": document_id,
         "fileName": file_name,
-        "blobName": blob_full_path,
+        "blobName": myblob.name,
         "size": myblob.length,
         "uploadedAt": now_iso()
     }
