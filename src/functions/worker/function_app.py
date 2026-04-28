@@ -7,7 +7,7 @@ app = func.FunctionApp()
 
 @app.blob_trigger(arg_name="myblob", path="doc-storage/input/{name}",
                                connection="docstoragens_STORAGE")
-@app.service_bus_queue_output(arg_name="msg", queue_name="doc-sb-ns", connection="SERVICE_BUS_CONNECTION_STR")
+@app.service_bus_queue_output(arg_name="msg", queue_name="document-processing", connection="SERVICE_BUS_CONNECTION_STR")
 def WorkerFile(myblob: func.InputStream, msg: func.Out[str]):
     logging.info(f"Version CI/CD => Python blob trigger function processed blob"
                 f"Name: {myblob.name}"
@@ -29,6 +29,6 @@ def WorkerFile(myblob: func.InputStream, msg: func.Out[str]):
         msg.set(json.dumps(message_data))
 
         logging.info(f"Message envoyé pour le document {document_id}")
-        
+
     except ValueError:
         logging.error(f"le format du fichier {blob_name_only} est invalide. Attendu id_nom.ext")
