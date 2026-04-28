@@ -122,41 +122,16 @@ def ServiceBusWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]
     
     logging.info(f"[Function2] Traitement du document : {doc_id}")
 
-    # try:
-    #     if file_size == 0:
-    #         update_cosmos_status(doc_id, "ERROR", [])
-    #         logging.warning(f"Document {doc_id} vide. Statut ERROR.")
-    #         return
+    signalRMessages.set(json.dumps({
+        "target": "newMessage",
+        "arguments": [{
+            "documentId": doc_id,
+            "status": "PROCESSING",
+            "message": "L'IA analyse votre document..."
+        }]
+    }))
 
-    #     # 3. Logique de Tagging (basée sur l'énoncé du TP)
-    #     tags = set()
-        
-    #     # Extensions
-    #     if file_name.endswith('.pdf'): tags.update(['pdf', 'document'])
-    #     elif file_name.endswith('.docx'): tags.update(['word', 'document'])
-    #     elif file_name.endswith('.png'): tags.update(['image'])
-        
-    #     # Mots-clés
-    #     keywords_map = {
-    #         "cv": ["cv", "rh"],
-    #         "facture": ["facture", "comptabilite"],
-    #         "contrat": ["contrat", "administratif"],
-    #         "azure": ["azure", "cloud"],
-    #         "docker": ["docker", "devops"]
-    #     }
-        
-    #     for key, value in keywords_map.items():
-    #         if key in file_name:
-    #             tags.update(value)
-
-    #     # 4. Mise à jour Cosmos DB
-    #     update_cosmos_status(doc_id, "PROCESSED", list(tags))
-    #     logging.info(f"Document {doc_id} traité avec succès.")
-
-    # except Exception as e:
-    #     logging.error(f"Erreur lors du traitement : {e}")
-    #     # En cas d'erreur (ex: document introuvable), on peut mettre le statut à ERROR
-    #     update_cosmos_status(doc_id, "ERROR", [])
+    update_cosmos_status(doc_id, "PROCESSING", [])
 
     try:
         if file_size == 0:
@@ -191,8 +166,18 @@ def ServiceBusWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]
         }))
 
     except Exception as e:
-        logging.error(f"Erreur AI : {e}")
+        logging.error(f"Erreur : {e}")
         update_cosmos_status(doc_id, "ERROR", [])
+        
+        # NOTIFICATION "ERROR"
+        signalRMessages.set(json.dumps({
+            "target": "newMessage",
+            "arguments": [{
+                "documentId": doc_id,
+                "status": "ERROR",
+                "message": "Le traitement a échoué"
+            }]
+        }))
 
 def update_cosmos_status(doc_id, status, tags):
     # On récupère l'item existant
