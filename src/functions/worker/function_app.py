@@ -56,6 +56,9 @@ def now_iso():
     connection="SERVICE_BUS_CONNECTION_STR"
 )
 def BlobToServiceBus(myblob: func.InputStream):
+    logging.info(f"[Function1] Blob trigger function processed blob"
+                f"Name: {myblob.name}"
+                f"Blob Size: {myblob.length} bytes")
     blob_name = myblob.name  # input/123_cv_amine_azure.pdf
     file_part = blob_name.split("/")[-1]  # 123_cv_amine_azure.pdf
 
