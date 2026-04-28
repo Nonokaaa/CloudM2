@@ -54,7 +54,7 @@ def now_iso():
 )
 @app.service_bus_queue_output(
     arg_name="msg",
-    queue_name="SERVICE_BUS_QUEUE_NAME",
+    queue_name="document-processing",
     connection="SERVICE_BUS_CONNECTION_STR"
 )
 def BlobToServiceBus(myblob: func.InputStream, msg: func.Out[str]):
