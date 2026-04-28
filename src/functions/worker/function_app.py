@@ -107,6 +107,13 @@ def get_ai_client():
     queue_name="document-processing",
     connection="SERVICE_BUS_CONNECTION_STR"
 )
+@app.generic_output_binding(
+    arg_name="signalRMessages",
+    type="signalR",
+    hubName="documentsHub",
+    connectionStringSetting="SIGNALR_CONNECTION_STRING"
+)
+
 def ServiceBusWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]):
     message_body = msg.get_body().decode('utf-8')
     data = json.loads(message_body)
@@ -153,6 +160,11 @@ def ServiceBusWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]
     #     update_cosmos_status(doc_id, "ERROR", [])
 
     try:
+        if file_size == 0:
+            update_cosmos_status(doc_id, "ERROR", [])
+            logging.warning(f"Document {doc_id} vide. Statut ERROR.")
+            return
+        
         # 2. Appel à Azure AI pour extraire des mots-clés du nom de fichier
         client_ai = get_ai_client()
         # On nettoie un peu le nom (on enlève l'extension et les underscores)
