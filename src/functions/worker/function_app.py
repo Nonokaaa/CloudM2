@@ -42,7 +42,7 @@ def negotiate(req: func.HttpRequest, connectionInfo) -> func.HttpResponse:
     hubName="documentsHub",
     connectionStringSetting="SIGNALR_CONNECTION_STRING"
 )
-def BlobToServiceBus(myblob: func.InputStream, msg: func.Out[str]):
+def BlobToServiceBus(myblob: func.InputStream, msg: func.Out[str], signalRMessages: func.Out[str]):
     logging.info(f"[Function1] Traitement du blob : {myblob.name}")
     
     path_parts = myblob.name.split("/")
