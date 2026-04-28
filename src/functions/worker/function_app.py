@@ -113,7 +113,6 @@ def get_ai_client():
     hubName="documentsHub",
     connectionStringSetting="SIGNALR_CONNECTION_STRING"
 )
-
 def ServiceBusWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]):
     message_body = msg.get_body().decode('utf-8')
     data = json.loads(message_body)
