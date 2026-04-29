@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from azure.cosmos import CosmosClient
 from azure.ai.textanalytics import TextAnalyticsClient
 from azure.core.credentials import AzureKeyCredential
+from azure.messaging.signalrservice import SignalRServiceClient
 
 app = func.FunctionApp()
 
@@ -28,6 +29,7 @@ def negotiate(req: func.HttpRequest, connectionInfo) -> func.HttpResponse:
 # ─────────────────────────────────────────
 # FUNCTION 1 — Blob Trigger → Service Bus
 # ─────────────────────────────────────────
+ALLOWED_EXTENSIONS = {'.pdf', '.png', '.jpg', '.jpeg', '.docx'}
 @app.blob_trigger(
     arg_name="myblob",
     path="doc-storage/input/{name}",
@@ -48,15 +50,30 @@ def BlobToServiceBus(myblob: func.InputStream, msg: func.Out[str], signalRMessag
     logging.info(f"[Function1] Traitement du blob : {myblob.name}")
     
     path_parts = myblob.name.split("/")
+    file_name = path_parts[-1]
 
-    if len(path_parts) >= 4:
-        document_id = path_parts[-2]
-        file_name = path_parts[-1]
-    else:
-        file_part = path_parts[-1]
-        parts = file_part.split("_", 1)
-        document_id = parts[0] if len(parts) >= 2 else "unknown"
-        file_name = parts[1] if len(parts) >= 2 else file_part
+    parts = file_name.split("_", 1)
+    document_id = parts[0] if len(parts) >= 2 else "unknown"
+    extension = os.path.splitext(file_name)[1].lower()
+
+    error_reason = None
+    if myblob.length == 0 or myblob.length is None:
+        error_reason = "Le fichier est vide (0 octet)."
+    elif extension not in ALLOWED_EXTENSIONS:
+        error_reason = f"Extension {extension} non supportée."
+    
+    if error_reason:
+        logging.warning(f"Validation échouée pour {document_id} : {error_reason}")
+        update_cosmos_status(document_id, "ERROR", [], error_msg=error_reason)
+        signalRMessages.set(json.dumps({
+            "target": "newMessage",
+            "arguments": [{
+                "documentId": document_id,
+                "status": "ERROR",
+                "message": error_reason
+            }]
+        }))
+        return
 
     message = {
         "documentId": document_id,
@@ -79,11 +96,7 @@ def BlobToServiceBus(myblob: func.InputStream, msg: func.Out[str], signalRMessag
         }]
     }))
 
-    try:
-        update_cosmos_status(document_id, "QUEUED", [])
-    except Exception as e:
-        logging.error(f"Erreur mise à jour QUEUED : {e}")
-
+    update_cosmos_status(document_id, "QUEUED", [])
     logging.info(f"[Function1] Terminé pour documentId={document_id}")
 
 # # ─────────────────────────────────────────
@@ -113,44 +126,29 @@ def get_ai_client():
     hubName="documentsHub",
     connectionStringSetting="SIGNALR_CONNECTION_STRING"
 )
-def ServiceBusWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]):
+def ServiceBusWorker(msg: func.ServiceBusMessage):
     message_body = msg.get_body().decode('utf-8')
     data = json.loads(message_body)
     doc_id = data['documentId']
     file_name = data['fileName'].lower()
-    file_size = data['size']
     
+    # Initialisation du client SDK
+    service_client = SignalRServiceClient.from_connection_string(
+        connection_string=os.environ["SIGNALR_CONNECTION_STRING"],
+        hub_name="documentsHub"
+    )
+
     logging.info(f"[Function2] Traitement du document : {doc_id}")
 
-    notifications = []
+    service_client.send_to_all("newMessage", [{
+        "documentId": doc_id,
+        "status": "PROCESSING",
+        "message": "L'IA analyse votre document..."
+    }])
 
-    notifications.append(json.dumps({
-        "target": "newMessage",
-        "arguments": [{
-            "documentId": doc_id,
-            "status": "PROCESSING",
-            "message": "L'IA analyse votre document..."
-        }]
-    }))
     update_cosmos_status(doc_id, "PROCESSING", [])
 
     try:
-        if file_size == 0:
-            update_cosmos_status(doc_id, "ERROR", [])
-            # AJOUT : Notification SignalR obligatoire ici avant le return
-            notifications.append(json.dumps({
-                "target": "newMessage",
-                "arguments": [{
-                    "documentId": doc_id,
-                    "status": "ERROR",
-                    "message": "Erreur : Le fichier est vide (0 octet)."
-                }]
-            }))
-            return
-        
-        import time
-        time.sleep(1)  # Simule le temps de traitement de l'IA
-        
         # 2. Appel à Azure AI pour extraire des mots-clés du nom de fichier
         client_ai = get_ai_client()
         # On nettoie un peu le nom (on enlève l'extension et les underscores)
@@ -167,36 +165,32 @@ def ServiceBusWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]
         update_cosmos_status(doc_id, "PROCESSED", tags)
 
         # 4. Notification finale PROCESSED
-        notifications.append(json.dumps({
-            "target": "newMessage",
-            "arguments": [{
-                "documentId": doc_id,
-                "status": "PROCESSED",
-                "message": "Tags générés avec succès",
-                "tags": tags
-            }]
-        }))
+        service_client.send_to_all("newMessage", [{
+            "documentId": doc_id,
+            "status": "PROCESSED",
+            "message": "Tags générés avec succès",
+            "tags": tags
+        }])
 
     except Exception as e:
         logging.error(f"Erreur : {e}")
         update_cosmos_status(doc_id, "ERROR", [])
         
         # NOTIFICATION "ERROR"
-        notifications.append(json.dumps({
-            "target": "newMessage",
-            "arguments": [{
-                "documentId": doc_id,
-                "status": "ERROR",
-                "message": "Le traitement a échoué"
-            }]
-        }))
-        
-    signalRMessages.set(notifications)
+        service_client.send_to_all("newMessage", [{
+            "documentId": doc_id,
+            "status": "ERROR",
+            "message": str(e)
+        }])
 
-def update_cosmos_status(doc_id, status, tags):
-    # On récupère l'item existant
-    item = container_cosmos.read_item(item=doc_id, partition_key='JOB')
-    item['status'] = status
-    item['tags'] = tags
-    item['processedAt'] = datetime.now(timezone.utc).isoformat() + "Z"
-    container_cosmos.replace_item(item=doc_id, body=item)
+def update_cosmos_status(doc_id, status, tags, error_msg=None):
+    try:
+        item = container_cosmos.read_item(item=doc_id, partition_key='JOB')
+        item['status'] = status
+        item['tags'] = tags
+        item['processedAt'] = datetime.now(timezone.utc).isoformat()
+        if error_msg:
+            item['errorMessage'] = error_msg
+        container_cosmos.replace_item(item=doc_id, body=item)
+    except Exception as e:
+        logging.warning(f"Impossible de mettre à jour Cosmos : {e}")
