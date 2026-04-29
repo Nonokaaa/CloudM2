@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from azure.cosmos import CosmosClient
 from azure.ai.textanalytics import TextAnalyticsClient
 from azure.core.credentials import AzureKeyCredential
-from azure.messaging.signalrservice import SignalRServiceClient
 
 app = func.FunctionApp()
 
@@ -126,25 +125,22 @@ def get_ai_client():
     hubName="documentsHub",
     connectionStringSetting="SIGNALR_CONNECTION_STRING"
 )
-def ServiceBusWorker(msg: func.ServiceBusMessage):
+def ServiceBusWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]):
     message_body = msg.get_body().decode('utf-8')
     data = json.loads(message_body)
     doc_id = data['documentId']
     file_name = data['fileName'].lower()
     
-    # Initialisation du client SDK
-    service_client = SignalRServiceClient.from_connection_string(
-        connection_string=os.environ["SIGNALR_CONNECTION_STRING"],
-        hub_name="documentsHub"
-    )
-
     logging.info(f"[Function2] Traitement du document : {doc_id}")
 
-    service_client.send_to_all("newMessage", [{
-        "documentId": doc_id,
-        "status": "PROCESSING",
-        "message": "L'IA analyse votre document..."
-    }])
+    signalRMessages.set(json.dumps({
+        "target": "newMessage",
+        "arguments": [{
+            "documentId": doc_id,
+            "status": "PROCESSING",
+            "message": "L'IA analyse votre document..."
+        }]
+    }))
 
     update_cosmos_status(doc_id, "PROCESSING", [])
 
@@ -165,23 +161,29 @@ def ServiceBusWorker(msg: func.ServiceBusMessage):
         update_cosmos_status(doc_id, "PROCESSED", tags)
 
         # 4. Notification finale PROCESSED
-        service_client.send_to_all("newMessage", [{
-            "documentId": doc_id,
-            "status": "PROCESSED",
-            "message": "Tags générés avec succès",
-            "tags": tags
-        }])
+        signalRMessages.set(json.dumps({
+            "target": "newMessage",
+            "arguments": [{
+                "documentId": doc_id,
+                "status": "PROCESSED",
+                "message": "Tags générés avec succès",
+                "tags": tags
+            }]
+        }))
 
     except Exception as e:
         logging.error(f"Erreur : {e}")
         update_cosmos_status(doc_id, "ERROR", [])
         
         # NOTIFICATION "ERROR"
-        service_client.send_to_all("newMessage", [{
-            "documentId": doc_id,
-            "status": "ERROR",
-            "message": str(e)
-        }])
+        signalRMessages.set(json.dumps({
+            "target": "newMessage",
+            "arguments": [{
+                "documentId": doc_id,
+                "status": "ERROR",
+                "message": "Le traitement a échoué"
+            }]
+        }))
 
 def update_cosmos_status(doc_id, status, tags, error_msg=None):
     try:
