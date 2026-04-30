@@ -62,7 +62,7 @@ def BlobToServiceBus(myblob: func.InputStream, msg: func.Out[str], signalRMessag
     extension = os.path.splitext(file_name)[1].lower()
     
     logging.info(f"Extraction réussie - ID: {document_id} | Fichier: {file_name}")
-    
+
     error_reason = None
     if myblob.length == 0 or myblob.length is None:
         error_reason = "Le fichier est vide (0 octet)."
@@ -235,7 +235,7 @@ def update_cosmos_status(doc_id, status, tags, error_msg=None):
         item['tags'] = tags
         item['processedAt'] = datetime.now(timezone.utc).isoformat()
         if error_msg:
-            item['errorMessage'] = error_msg
+            item['error'] = error_msg
         container_cosmos.replace_item(item=doc_id, body=item)
     except Exception as e:
         logging.warning(f"Impossible de mettre à jour Cosmos : {e}")
