@@ -49,12 +49,20 @@ def BlobToServiceBus(myblob: func.InputStream, msg: func.Out[str], signalRMessag
     logging.info(f"[Function1] Traitement du blob : {myblob.name}")
     
     path_parts = myblob.name.split("/")
-    file_name = path_parts[-1]
+    # Avec l'architecture input/{id}/{filename} :
+    # path_parts[-1] est le nom du fichier (filename)
+    # path_parts[-2] est le dossier parent (documentId)
+    if len(path_parts) >= 2:
+        file_name = path_parts[-1]
+        document_id = path_parts[-2]
+    else:
+        logging.error(f"Impossible d'extraire l'ID du chemin : {myblob.name}")
+        return
 
-    parts = file_name.split("_", 1)
-    document_id = parts[0] if len(parts) >= 2 else "unknown"
     extension = os.path.splitext(file_name)[1].lower()
-
+    
+    logging.info(f"Extraction réussie - ID: {document_id} | Fichier: {file_name}")
+    
     error_reason = None
     if myblob.length == 0 or myblob.length is None:
         error_reason = "Le fichier est vide (0 octet)."
