@@ -145,6 +145,9 @@ def ServiceBusWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]
     update_cosmos_status(doc_id, "PROCESSING", [])
 
     try:
+
+        raise Exception("Simulation d'échec critique pour tester la DLQ")
+    
         # 2. Appel à Azure AI pour extraire des mots-clés du nom de fichier
         client_ai = get_ai_client()
         # On nettoie un peu le nom (on enlève l'extension et les underscores)
@@ -173,17 +176,49 @@ def ServiceBusWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]
 
     except Exception as e:
         logging.error(f"Erreur : {e}")
-        update_cosmos_status(doc_id, "ERROR", [])
+        raise e
+
+# ─────────────────────────────────────────
+# FUNCTION 3 — DLQ Alert Function
+# ─────────────────────────────────────────
+@app.service_bus_queue_trigger(
+    arg_name="msg",
+    queue_name="document-processing/$DeadLetterQueue", 
+    connection="SERVICE_BUS_CONNECTION_STR"
+)
+@app.generic_output_binding(
+    arg_name="signalRMessages",
+    type="signalR",
+    hubName="documentsHub",
+    connectionStringSetting="SIGNALR_CONNECTION_STRING"
+)
+def DlqAlertFunction(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]):
+    try:
+        # On essaie de lire le message tel qu'il a été envoyé initialement
+        message_body = msg.get_body().decode('utf-8')
+        data = json.loads(message_body)
+        doc_id = data.get('documentId', 'ID_INCONNU')
         
-        # NOTIFICATION "ERROR"
+        # Récupération de la raison de mise en DLQ fournie par Service Bus
+        dead_letter_reason = msg.dead_letter_reason or "Erreur inconnue"
+        dead_letter_error_description = msg.dead_letter_error_description or "Le message a échoué après plusieurs tentatives."
+
+        error_message = f"Échec définitif (DLQ): {dead_letter_reason} - {dead_letter_error_description}"
+        logging.error(f"[Function3 DLQ] Alerte pour le document {doc_id}: {error_message}")
+
+        update_cosmos_status(doc_id, "ERROR", [], error_msg=error_message)
+
         signalRMessages.set(json.dumps({
             "target": "newMessage",
             "arguments": [{
                 "documentId": doc_id,
                 "status": "ERROR",
-                "message": "Le traitement a échoué"
+                "message": "Erreur de traitement (Message envoyé en DLQ)"
             }]
         }))
+
+    except Exception as e:
+        logging.critical(f"[Function3 DLQ] Impossible de traiter le message DLQ : {e}")
 
 def update_cosmos_status(doc_id, status, tags, error_msg=None):
     try:
