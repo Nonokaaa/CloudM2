@@ -154,7 +154,7 @@ def ServiceBusWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]
 
     try:
 
-        raise Exception("Simulation d'échec critique pour tester la DLQ")
+        # raise Exception("Simulation d'échec critique pour tester la DLQ")
     
         # 2. Appel à Azure AI pour extraire des mots-clés du nom de fichier
         client_ai = get_ai_client()
