@@ -9,6 +9,7 @@ const SIGNALR_URL = "https://ns-function-app.azurewebsites.net/api";
 function App() {
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [message, setMessage] = useState("");
   const [jobId, setJobId] = useState("");
   const [status, setStatus] = useState("");
@@ -36,6 +37,10 @@ function App() {
           if (data.tags) {
             setTags(data.tags);
           }
+
+          if (data.status === "PROCESSED" || data.status === "ERROR") {
+            setIsProcessing(false);
+          }
         });
       })
       .catch((err) => console.error("Erreur de connexion SignalR: ", err));
@@ -62,6 +67,7 @@ function App() {
     setStatus("");
     setMessage("Initializing...");
     setTags([]);
+    setIsProcessing(true);
 
     try {
       // 1. Create Job
@@ -86,6 +92,7 @@ function App() {
       setMessage(
         `Erreur lors de l'envoi: ${error.response?.data?.detail || error.message}`,
       );
+      setIsProcessing(false);
     } finally {
       setLoading(false);
     }
@@ -96,8 +103,15 @@ function App() {
       <h1>File Upload</h1>
       <div className="card">
         <input type="file" onChange={handleFileChange} />
-        <button onClick={handleCreateAndUpload} disabled={loading || !file}>
-          {loading ? "Traitement..." : "Upload & Analyser"}
+        <button
+          onClick={handleCreateAndUpload}
+          disabled={loading || isProcessing || !file}
+        >
+          {loading
+            ? "Envoi..."
+            : isProcessing
+              ? "Traitement en cours..."
+              : "Upload & Analyser"}
         </button>
       </div>
 

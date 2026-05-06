@@ -127,19 +127,23 @@ def get_ai_client():
     queue_name="document-processing",
     connection="SERVICE_BUS_CONNECTION_STR"
 )
+@app.service_bus_queue_output(
+    arg_name="aiMsg",
+    queue_name="document-ai-processing",
+    connection="SERVICE_BUS_CONNECTION_STR"
+)
 @app.generic_output_binding(
     arg_name="signalRMessages",
     type="signalR",
     hubName="documentsHub",
     connectionStringSetting="SIGNALR_CONNECTION_STRING"
 )
-def ServiceBusWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]):
+def ServiceBusWorker(msg: func.ServiceBusMessage, aiMsg: func.Out[str], signalRMessages: func.Out[str]):
     message_body = msg.get_body().decode('utf-8')
     data = json.loads(message_body)
     doc_id = data['documentId']
-    file_name = data['fileName'].lower()
     
-    logging.info(f"[Function2] Traitement du document : {doc_id}")
+    logging.info(f"[Function2] Pré-traitement du document : {doc_id}")
 
     signalRMessages.set(json.dumps({
         "target": "newMessage",
@@ -152,26 +156,41 @@ def ServiceBusWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]
 
     update_cosmos_status(doc_id, "PROCESSING", [])
 
-    try:
+    # Message relayé vers l'étape IA pour éviter d'écraser la notif PROCESSING.
+    aiMsg.set(message_body)
 
-        # raise Exception("Simulation d'échec critique pour tester la DLQ")
-    
-        # 2. Appel à Azure AI pour extraire des mots-clés du nom de fichier
+@app.service_bus_queue_trigger(
+    arg_name="msg",
+    queue_name="document-ai-processing",
+    connection="SERVICE_BUS_CONNECTION_STR"
+)
+@app.generic_output_binding(
+    arg_name="signalRMessages",
+    type="signalR",
+    hubName="documentsHub",
+    connectionStringSetting="SIGNALR_CONNECTION_STRING"
+)
+def AiProcessingWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]):
+    message_body = msg.get_body().decode('utf-8')
+    data = json.loads(message_body)
+    doc_id = data['documentId']
+    file_name = data['fileName'].lower()
+
+    logging.info(f"[Function2b] Traitement IA du document : {doc_id}")
+
+    try:
         client_ai = get_ai_client()
-        # On nettoie un peu le nom (on enlève l'extension et les underscores)
+        # On nettoie le nom (sans extension ni séparateurs) pour améliorer l'extraction.
         clean_name = file_name.replace("_", " ").replace("-", " ").split(".")[0]
         
         response = client_ai.extract_key_phrases(documents=[clean_name])[0]
         tags = response.key_phrases
 
-        # Si l'IA ne trouve rien, on met un tag par défaut pour éviter un tableau vide
         if not tags:
             tags = ["document"]
 
-        # 3. Mise à jour Cosmos DB
         update_cosmos_status(doc_id, "PROCESSED", tags)
 
-        # 4. Notification finale PROCESSED
         signalRMessages.set(json.dumps({
             "target": "newMessage",
             "arguments": [{
@@ -183,7 +202,7 @@ def ServiceBusWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]
         }))
 
     except Exception as e:
-        logging.error(f"Erreur : {e}")
+        logging.error(f"Erreur IA pour {doc_id} : {e}")
         raise e
 
 # ─────────────────────────────────────────
