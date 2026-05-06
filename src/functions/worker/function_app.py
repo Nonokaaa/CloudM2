@@ -220,6 +220,23 @@ def AiProcessingWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[st
     connectionStringSetting="SIGNALR_CONNECTION_STRING"
 )
 def DlqAlertFunction(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]):
+    handle_dlq_message(msg, signalRMessages, "document-processing")
+
+@app.service_bus_queue_trigger(
+    arg_name="msg",
+    queue_name="document-ai-processing/$DeadLetterQueue",
+    connection="SERVICE_BUS_CONNECTION_STR"
+)
+@app.generic_output_binding(
+    arg_name="signalRMessages",
+    type="signalR",
+    hubName="documentsHub",
+    connectionStringSetting="SIGNALR_CONNECTION_STRING"
+)
+def AiDlqAlertFunction(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]):
+    handle_dlq_message(msg, signalRMessages, "document-ai-processing")
+
+def handle_dlq_message(msg: func.ServiceBusMessage, signalRMessages: func.Out[str], source_queue: str):
     try:
         # On essaie de lire le message tel qu'il a été envoyé initialement
         message_body = msg.get_body().decode('utf-8')
@@ -231,7 +248,7 @@ def DlqAlertFunction(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]
         dead_letter_error_description = msg.dead_letter_error_description or "Le message a échoué après plusieurs tentatives."
 
         error_message = f"Échec définitif (DLQ): {dead_letter_reason} - {dead_letter_error_description}"
-        logging.error(f"[Function3 DLQ] Alerte pour le document {doc_id}: {error_message}")
+        logging.error(f"[Function3 DLQ:{source_queue}] Alerte pour le document {doc_id}: {error_message}")
 
         update_cosmos_status(doc_id, "ERROR", [], error_msg=error_message)
 
@@ -245,7 +262,7 @@ def DlqAlertFunction(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]
         }))
 
     except Exception as e:
-        logging.critical(f"[Function3 DLQ] Impossible de traiter le message DLQ : {e}")
+        logging.critical(f"[Function3 DLQ:{source_queue}] Impossible de traiter le message DLQ : {e}")
 
 def update_cosmos_status(doc_id, status, tags, error_msg=None):
     try:
