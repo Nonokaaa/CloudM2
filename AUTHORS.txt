@@ -1,0 +1,4 @@
+Noémie SAINTEMARIE et SABOUNDJIAN Illona : Même base de projet 
+Noémie SAINTEMARIE : Notification, base du projet car soucis avec azure pour Illona (front déployé sur Vercel)
+Illona SABOUNDJIAN : Tagging IA avec groq + diaporama 
+Toutes les autres parties ont été faite conjointement en appel.
