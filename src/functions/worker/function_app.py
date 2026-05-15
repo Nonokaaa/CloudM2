@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from azure.cosmos import CosmosClient
 from azure.ai.textanalytics import TextAnalyticsClient
 from azure.core.credentials import AzureKeyCredential
-
+import requests
 app = func.FunctionApp()
 
 def now_iso():
@@ -49,9 +49,6 @@ def BlobToServiceBus(myblob: func.InputStream, msg: func.Out[str], signalRMessag
     logging.info(f"[Function1] Traitement du blob : {myblob.name}")
     
     path_parts = myblob.name.split("/")
-    # Avec l'architecture input/{id}/{filename} :
-    # path_parts[-1] est le nom du fichier (filename)
-    # path_parts[-2] est le dossier parent (documentId)
     if len(path_parts) >= 2:
         file_name = path_parts[-1]
         document_id = path_parts[-2]
@@ -60,7 +57,6 @@ def BlobToServiceBus(myblob: func.InputStream, msg: func.Out[str], signalRMessag
         return
 
     extension = os.path.splitext(file_name)[1].lower()
-    
     logging.info(f"Extraction réussie - ID: {document_id} | Fichier: {file_name}")
 
     error_reason = None
@@ -175,36 +171,35 @@ def AiProcessingWorker(msg: func.ServiceBusMessage, signalRMessages: func.Out[st
     data = json.loads(message_body)
     doc_id = data['documentId']
     file_name = data['fileName'].lower()
-
     logging.info(f"[Function2b] Traitement IA du document : {doc_id}")
 
     try:
-        client_ai = get_ai_client()
-        # On nettoie le nom (sans extension ni séparateurs) pour améliorer l'extraction.
-        clean_name = file_name.replace("_", " ").replace("-", " ").split(".")[0]
-        
-        response = client_ai.extract_key_phrases(documents=[clean_name])[0]
-        tags = response.key_phrases
+        prompt = f"""Analyse le nom de fichier suivant et génère entre 3 et 8 tags courts en français. Nom du fichier : {file_name}. Retourne uniquement un tableau JSON de chaînes."""
 
-        if not tags:
-            tags = ["document"]
-
-        update_cosmos_status(doc_id, "PROCESSED", tags)
-
-        signalRMessages.set(json.dumps({
-            "target": "newMessage",
-            "arguments": [{
-                "documentId": doc_id,
-                "status": "PROCESSED",
-                "message": "Tags générés avec succès",
-                "tags": tags
-            }]
-        }))
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}"},
+            json={
+                "model": "llama-3.3-70b-versatile",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3
+            }
+        )
+        logging.warning(f"Groq status: {response.status_code} | body: {response.text[:300]}")
+        tags = json.loads(response.json()["choices"][0]["message"]["content"])
+        tags = tags[:8]
+        logging.info(f"Tags générés par Groq : {tags}")
 
     except Exception as e:
-        logging.error(f"Erreur IA pour {doc_id} : {e}")
-        raise e
+        logging.warning(f"Fallback activé : {e}")
+        ext = os.path.splitext(file_name)[1].replace(".", "")
+        tags = ["document", "fichier", ext or "upload", "cloud", "azure"]
 
+    update_cosmos_status(doc_id, "PROCESSED", tags)
+    signalRMessages.set(json.dumps({
+        "target": "newMessage",
+        "arguments": [{"documentId": doc_id, "status": "PROCESSED", "message": "Tags générés avec succès", "tags": tags}]
+    }))
 # ─────────────────────────────────────────
 # FUNCTION 3 — DLQ Alert Function
 # ─────────────────────────────────────────
